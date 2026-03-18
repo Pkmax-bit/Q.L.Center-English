@@ -1,10 +1,11 @@
 -- Enable UUID extension
 create extension if not exists "uuid-ossp";
 
--- Profiles (extends Supabase auth.users)
+-- Profiles (standalone, không dùng Supabase Auth)
 create table public.profiles (
-  id uuid references auth.users on delete cascade primary key,
-  email text not null,
+  id uuid default uuid_generate_v4() primary key,
+  email text unique not null,
+  password_hash text not null,
   full_name text not null,
   role text not null check (role in ('admin', 'teacher', 'student')),
   phone text,

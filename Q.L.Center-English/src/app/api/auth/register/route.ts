@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth';
+import bcrypt from 'bcryptjs';
 
 export async function POST(request: Request) {
   try {
@@ -15,34 +16,39 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Thiếu thông tin bắt buộc' }, { status: 400 });
     }
 
-    // Create auth user
-    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-    });
-
-    if (authError) {
-      return NextResponse.json({ error: authError.message }, { status: 400 });
+    if (!['admin', 'teacher', 'student'].includes(role)) {
+      return NextResponse.json({ error: 'Role không hợp lệ' }, { status: 400 });
     }
 
-    // Create profile
+    // Kiểm tra email đã tồn tại chưa
+    const { data: existing } = await supabaseAdmin
+      .from('profiles')
+      .select('id')
+      .eq('email', email)
+      .single();
+
+    if (existing) {
+      return NextResponse.json({ error: 'Email đã được sử dụng' }, { status: 400 });
+    }
+
+    // Hash password
+    const password_hash = await bcrypt.hash(password, 10);
+
+    // Tạo profile với password
     const { data: profile, error: profileError } = await supabaseAdmin
       .from('profiles')
       .insert({
-        id: authData.user.id,
         email,
         full_name,
         role,
         phone: phone || null,
+        password_hash,
       })
-      .select()
+      .select('id, email, full_name, role, phone, avatar_url, is_active, created_at, updated_at')
       .single();
 
     if (profileError) {
-      // Rollback auth user if profile creation fails
-      await supabaseAdmin.auth.admin.deleteUser(authData.user.id);
-      return NextResponse.json({ error: 'Không thể tạo hồ sơ' }, { status: 500 });
+      return NextResponse.json({ error: 'Không thể tạo tài khoản: ' + profileError.message }, { status: 500 });
     }
 
     return NextResponse.json({ data: profile });

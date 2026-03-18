@@ -1,9 +1,10 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { supabase } from '@/lib/supabase/client';
 import { Profile } from '@/types';
 import { useRouter } from 'next/navigation';
+
+const TOKEN_KEY = 'auth_token';
 
 export function useAuth() {
   const [user, setUser] = useState<Profile | null>(null);
@@ -13,19 +14,19 @@ export function useAuth() {
 
   const fetchProfile = useCallback(async () => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
+      const savedToken = localStorage.getItem(TOKEN_KEY);
+      if (!savedToken) {
         setUser(null);
         setToken(null);
         setLoading(false);
         return;
       }
 
-      setToken(session.access_token);
+      setToken(savedToken);
 
       const res = await fetch('/api/auth/me', {
         headers: {
-          'Authorization': `Bearer ${session.access_token}`,
+          'Authorization': `Bearer ${savedToken}`,
         },
       });
 
@@ -33,7 +34,10 @@ export function useAuth() {
         const data = await res.json();
         setUser(data.data);
       } else {
+        // Token không hợp lệ hoặc hết hạn
+        localStorage.removeItem(TOKEN_KEY);
         setUser(null);
+        setToken(null);
       }
     } catch {
       setUser(null);
@@ -44,12 +48,6 @@ export function useAuth() {
 
   useEffect(() => {
     fetchProfile();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
-      fetchProfile();
-    });
-
-    return () => subscription.unsubscribe();
   }, [fetchProfile]);
 
   const login = async (email: string, password: string) => {
@@ -62,16 +60,14 @@ export function useAuth() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Đăng nhập thất bại');
 
-    // Set session in browser
-    await supabase.auth.setSession({
-      access_token: data.data.session.access_token,
-      refresh_token: data.data.session.refresh_token,
-    });
+    // Lưu token vào localStorage
+    const accessToken = data.data.session.access_token;
+    localStorage.setItem(TOKEN_KEY, accessToken);
 
     setUser(data.data.profile);
-    setToken(data.data.session.access_token);
+    setToken(accessToken);
 
-    // Redirect based on role
+    // Redirect theo role
     const role = data.data.profile.role;
     router.push(`/${role}`);
 
@@ -79,7 +75,7 @@ export function useAuth() {
   };
 
   const logout = async () => {
-    await supabase.auth.signOut();
+    localStorage.removeItem(TOKEN_KEY);
     setUser(null);
     setToken(null);
     router.push('/login');

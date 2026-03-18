@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth';
+import bcrypt from 'bcryptjs';
+
+const SAFE_FIELDS = 'id, email, full_name, role, phone, avatar_url, is_active, created_at, updated_at';
 
 export async function GET(request: Request) {
   try {
@@ -11,7 +14,7 @@ export async function GET(request: Request) {
 
     const { data, error } = await supabaseAdmin
       .from('profiles')
-      .select('*')
+      .select(SAFE_FIELDS)
       .eq('role', 'student')
       .order('created_at', { ascending: false });
 
@@ -35,31 +38,33 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Thiếu thông tin bắt buộc' }, { status: 400 });
     }
 
-    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-    });
+    // Kiểm tra email trùng
+    const { data: existing } = await supabaseAdmin
+      .from('profiles')
+      .select('id')
+      .eq('email', email)
+      .single();
 
-    if (authError) {
-      return NextResponse.json({ error: authError.message }, { status: 400 });
+    if (existing) {
+      return NextResponse.json({ error: 'Email đã được sử dụng' }, { status: 400 });
     }
+
+    const password_hash = await bcrypt.hash(password, 10);
 
     const { data: profile, error: profileError } = await supabaseAdmin
       .from('profiles')
       .insert({
-        id: authData.user.id,
         email,
         full_name,
         role: 'student',
         phone: phone || null,
+        password_hash,
       })
-      .select()
+      .select(SAFE_FIELDS)
       .single();
 
     if (profileError) {
-      await supabaseAdmin.auth.admin.deleteUser(authData.user.id);
-      return NextResponse.json({ error: 'Không thể tạo hồ sơ học sinh' }, { status: 500 });
+      return NextResponse.json({ error: 'Không thể tạo hồ sơ học sinh: ' + profileError.message }, { status: 500 });
     }
 
     return NextResponse.json({ data: profile });
@@ -81,7 +86,7 @@ export async function PUT(request: Request) {
       .from('profiles')
       .update({ full_name, phone, is_active, updated_at: new Date().toISOString() })
       .eq('id', id)
-      .select()
+      .select(SAFE_FIELDS)
       .single();
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -103,9 +108,12 @@ export async function DELETE(request: Request) {
 
     if (!id) return NextResponse.json({ error: 'Thiếu ID' }, { status: 400 });
 
-    const { error } = await supabaseAdmin.auth.admin.deleteUser(id);
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    const { error } = await supabaseAdmin
+      .from('profiles')
+      .delete()
+      .eq('id', id);
 
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ message: 'Đã xóa học sinh' });
   } catch {
     return NextResponse.json({ error: 'Đã xảy ra lỗi' }, { status: 500 });

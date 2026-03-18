@@ -1,6 +1,10 @@
 import { supabaseAdmin } from './supabase/server';
-import { supabase } from './supabase/client';
 import { Profile } from '@/types';
+import { jwtVerify } from 'jose';
+
+const JWT_SECRET = new TextEncoder().encode(
+  process.env.JWT_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY || 'default-secret-change-me'
+);
 
 export async function verifyAuth(request: Request): Promise<Profile | null> {
   const authHeader = request.headers.get('Authorization');
@@ -10,18 +14,24 @@ export async function verifyAuth(request: Request): Promise<Profile | null> {
 
   const token = authHeader.replace('Bearer ', '');
 
-  const { data: { user }, error } = await supabase.auth.getUser(token);
-  if (error || !user) {
+  try {
+    const { payload } = await jwtVerify(token, JWT_SECRET);
+    const userId = payload.sub;
+
+    if (!userId) {
+      return null;
+    }
+
+    const { data: profile } = await supabaseAdmin
+      .from('profiles')
+      .select('id, email, full_name, role, phone, avatar_url, is_active, created_at, updated_at')
+      .eq('id', userId)
+      .single();
+
+    return profile as Profile | null;
+  } catch {
     return null;
   }
-
-  const { data: profile } = await supabaseAdmin
-    .from('profiles')
-    .select('*')
-    .eq('id', user.id)
-    .single();
-
-  return profile as Profile | null;
 }
 
 export async function requireRole(request: Request, roles: string[]): Promise<Profile | null> {
